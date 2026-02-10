@@ -1,0 +1,79 @@
+---
+- name: Show OS Info
+  debug:
+    msg: "OS Family: {{ ansible_os_family }}, Distribution: {{ ansible_distribution }}"
+
+- name: Check installed Tailscale version
+  shell: tailscale version | head -n 1
+  register: installed_tailscale_version
+  failed_when: false
+  changed_when: false
+
+- name: Install Tailscale (Debian/Ubuntu)
+  shell: curl -fsSL https://tailscale.com/install.sh | sh
+  when: 
+    - ansible_os_family == "Debian" 
+    - (installed_tailscale_version.rc != 0 or tailscale_version not in installed_tailscale_version.stdout)
+
+- name: Install Tailscale (OpenCloudOS/Manual Binary)
+  when: 
+    - ansible_distribution == "OpenCloudOS" 
+    - (installed_tailscale_version.rc != 0 or tailscale_version not in installed_tailscale_version.stdout)
+  block:
+    - name: Download Tailscale binary
+      get_url:
+        url: "https://pkgs.tailscale.com/stable/tailscale_{{ tailscale_version }}_{{ tailscale_arch }}.tgz"
+        dest: /tmp/tailscale.tgz
+
+    - name: Extract Tailscale binary
+      unarchive:
+        src: /tmp/tailscale.tgz
+        dest: /tmp/
+        remote_src: yes
+
+    - name: Ensure binaries are in /usr/bin
+      copy:
+        src: "/tmp/tailscale_{{ tailscale_version }}_{{ tailscale_arch }}/{{ item }}"
+        dest: "/usr/bin/{{ item }}"
+        mode: '0755'
+        remote_src: yes
+      loop:
+        - tailscale
+        - tailscaled
+
+
+- name: Update systemd service binary path
+  replace:
+    path: /etc/systemd/system/tailscaled.service
+    regexp: '/usr/sbin/tailscaled'
+    replace: '/usr/bin/tailscaled'
+  when: ansible_distribution == "OpenCloudOS"
+
+- name: Create default env file with required variables
+  copy:
+    dest: /etc/default/tailscaled
+    content: |
+      PORT=41641
+      FLAGS=""
+    force: yes
+
+- name: Start Tailscale
+  systemd:
+    name: tailscaled
+    state: started
+    enabled: yes
+    daemon_reload: yes
+
+- name: Authenticate to Tailscale
+  shell: tailscale up --authkey={{ lookup('env', 'TAILSCALE_AUTH_KEY') }} --accept-dns=false --force-reauth
+  changed_when: false
+  no_log: true
+
+- name: Get Tailscale IP
+  shell: tailscale ip -4
+  register: tailscale_ip_output
+  changed_when: false
+
+- name: Set Tailscale IP fact
+  set_fact:
+    tailscale_ip: "{{ tailscale_ip_output.stdout.strip() }}"

@@ -1,0 +1,15 @@
+---
+- name: Basic Server Setup
+  hosts: cloud_servers
+  become: yes
+  gather_facts: yes
+
+  vars:
+    trusted_ip: "{{ firewall_trusted_ip }}"
+
+  roles:
+    - common
+    - tailscale
+    - role: k3s
+      when: server_mode == 'single-node' or server_mode == 'cluster'
+    - firewall

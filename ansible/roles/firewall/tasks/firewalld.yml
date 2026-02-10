@@ -1,0 +1,197 @@
+---
+- name: Install firewalld (if not present)
+  package:
+    name: firewalld
+    state: present
+
+- name: Ensure firewalld is running and enabled
+  service:
+    name: firewalld
+    state: started
+    enabled: yes
+
+- name: Get default zone
+  command: firewall-cmd --get-default-zone
+  register: default_zone
+  changed_when: false
+
+- name: Display default zone
+  debug:
+    msg: "Default firewall zone: {{ default_zone.stdout }}"
+
+- name: Set default zone to drop (deny all by default)
+  command: firewall-cmd --set-default-zone=drop
+  register: zone_change
+  changed_when: "'set' in zone_change.stdout"
+
+- name: Allow all traffic from trusted IP in public zone (safety)
+  firewalld:
+    zone: public
+    rich_rule: 'rule family="ipv4" source address="{{ trusted_ip }}" accept'
+    permanent: yes
+    immediate: yes
+    state: enabled
+
+- name: Allow all traffic from trusted IP in drop zone
+  firewalld:
+    zone: drop
+    rich_rule: 'rule family="ipv4" source address="{{ trusted_ip }}" accept'
+    permanent: yes
+    immediate: yes
+    state: enabled
+
+- name: Allow all traffic from other nodes in the same cluster (Public IP)
+  firewalld:
+    zone: drop
+    rich_rule: 'rule family="ipv4" source address="{{ hostvars[item].ansible_host }}" accept'
+    permanent: yes
+    immediate: yes
+    state: enabled
+  loop: "{{ groups[cluster_name] }}"
+  when: 
+    - cluster_name is defined 
+    - cluster_name != 'default'
+    - cluster_name in groups
+    - hostvars[item].ansible_host is defined
+    - hostvars[item].ansible_host != ansible_host
+  ignore_errors: true
+
+- name: Allow all traffic from other nodes in the same cluster (Private IP)
+  firewalld:
+    zone: drop
+    rich_rule: 'rule family="ipv4" source address="{{ hostvars[item].ansible_default_ipv4.address }}" accept'
+    permanent: yes
+    immediate: yes
+    state: enabled
+  loop: "{{ groups[cluster_name] }}"
+  when: 
+    - cluster_name is defined 
+    - cluster_name != 'default'
+    - cluster_name in groups
+    - hostvars[item].ansible_default_ipv4.address is defined
+    - hostvars[item].ansible_default_ipv4.address != ansible_default_ipv4.address
+  ignore_errors: true
+
+- name: Allow all traffic from other nodes in the same cluster (Tailscale IP)
+  firewalld:
+    zone: drop
+    rich_rule: 'rule family="ipv4" source address="{{ hostvars[item].tailscale_ip }}" accept'
+    permanent: yes
+    immediate: yes
+    state: enabled
+  loop: "{{ groups[cluster_name] }}"
+  when: 
+    - cluster_name is defined 
+    - cluster_name != 'default'
+    - cluster_name in groups
+    - hostvars[item].tailscale_ip is defined
+    - hostvars[item].tailscale_ip != tailscale_ip
+  ignore_errors: true
+
+- name: Allow K3s API port (6443) for cluster communication
+  firewalld:
+    zone: drop
+    port: 6443/tcp
+    permanent: yes
+    immediate: yes
+    state: enabled
+  when: server_mode == 'cluster'
+
+- name: Allow etcd ports for HA master nodes
+  firewalld:
+    zone: drop
+    port: "{{ item }}"
+    permanent: yes
+    immediate: yes
+    state: enabled
+  loop:
+    - 2379/tcp
+    - 2380/tcp
+  when: 
+    - server_mode == 'cluster'
+    - node_function == 'master-node'
+
+- name: Allow Kubelet port
+  firewalld:
+    zone: drop
+    port: 10250/tcp
+    permanent: yes
+    immediate: yes
+    state: enabled
+
+- name: Allow NodePort range (30000-32767)
+  firewalld:
+    zone: drop
+    port: 30000-32767/tcp
+    permanent: yes
+    immediate: yes
+    state: enabled
+
+- name: Allow HTTP from anywhere in drop zone (master and single-node only)
+  firewalld:
+    zone: drop
+    service: http
+    permanent: yes
+    immediate: yes
+    state: enabled
+  when: node_function == 'master-node' or server_mode == 'single-node'
+
+- name: Allow HTTPS from anywhere in drop zone (master and single-node only)
+  firewalld:
+    zone: drop
+    service: https
+    permanent: yes
+    immediate: yes
+    state: enabled
+  when: node_function == 'master-node' or server_mode == 'single-node'
+
+- name: Enable masquerading in drop zone (Required for K8s CNI)
+  firewalld:
+    zone: drop
+    masquerade: yes
+    permanent: yes
+    immediate: yes
+    state: enabled
+
+- name: Add CNI and Tailscale interfaces to trusted zone
+  firewalld:
+    zone: trusted
+    interface: "{{ item }}"
+    permanent: yes
+    immediate: yes
+    state: enabled
+  loop:
+    - cni0
+    - flannel.1
+    - tailscale0
+
+- name: Allow internal Kubernetes traffic (Pod and Service CIDRs)
+  firewalld:
+    zone: drop
+    rich_rule: 'rule family="ipv4" source address="{{ item }}" accept'
+    permanent: yes
+    immediate: yes
+    state: enabled
+  loop:
+    - "{{ k3s_pod_cidr }}"
+    - "{{ k3s_service_cidr }}"
+
+- name: Allow Forwarding for K3s Pods and Services (Required for ServiceLB)
+  firewalld:
+    zone: drop
+    rich_rule: 'rule family="ipv4" destination address="{{ item }}" accept'
+    permanent: yes
+    immediate: yes
+    state: enabled
+  loop:
+    - "{{ k3s_pod_cidr }}"
+    - "{{ k3s_service_cidr }}"
+
+- name: List current firewall rules
+  command: firewall-cmd --list-all
+  register: firewall_rules
+  changed_when: false
+
+- name: Display firewall rules
+  debug:
+    msg: "{{ firewall_rules.stdout }}"

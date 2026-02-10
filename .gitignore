@@ -1,0 +1,17 @@
+# Environment variables
+.env
+
+# Ansible retry files
+*.retry
+
+# SSH keys
+*.pem
+*.key
+
+# IDE
+.vscode/
+.idea/
+
+# Logs
+*.log
+progress.log

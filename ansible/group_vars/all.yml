@@ -1,0 +1,14 @@
+---
+# Ansible configuration
+ansible_python_interpreter: /usr/bin/python3
+
+# Server configuration
+server_timezone: UTC
+
+# Tailscale configuration
+tailscale_version: "1.80.0"
+tailscale_arch: "amd64"
+
+# Kubernetes Network Configuration
+k3s_pod_cidr: "10.42.0.0/16"
+k3s_service_cidr: "10.43.0.0/16"

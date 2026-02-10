@@ -1,0 +1,114 @@
+---
+- name: Install ufw
+  apt:
+    name: ufw
+    state: present
+    update_cache: no
+
+- name: Disable ufw first
+  ufw:
+    state: disabled
+  ignore_errors: true
+
+- name: Reset ufw to defaults
+  command: ufw --force reset
+  changed_when: true
+
+- name: Set default policy to deny incoming
+  command: ufw default deny incoming
+  changed_when: true
+
+- name: Set default policy to allow outgoing
+  command: ufw default allow outgoing
+  changed_when: true
+
+- name: Allow SSH
+  command: ufw allow 22/tcp
+  changed_when: true
+
+- name: Allow all traffic from trusted IP
+  command: ufw allow from {{ trusted_ip }}
+  changed_when: true
+
+- name: Allow all traffic from other nodes in the same cluster
+  command: ufw allow from {{ hostvars[item].ansible_host }}
+  loop: "{{ groups[cluster_name] }}"
+  when: 
+    - cluster_name is defined 
+    - cluster_name != 'default'
+    - cluster_name in groups
+    - hostvars[item].ansible_host is defined
+    - hostvars[item].ansible_host != ansible_host
+  ignore_errors: true
+  changed_when: true
+
+- name: Allow all traffic from other nodes in the same cluster (Tailscale IP)
+  command: ufw allow from {{ hostvars[item].tailscale_ip }}
+  loop: "{{ groups[cluster_name] }}"
+  when: 
+    - cluster_name is defined 
+    - cluster_name != 'default'
+    - cluster_name in groups
+    - hostvars[item].tailscale_ip is defined
+    - hostvars[item].tailscale_ip != tailscale_ip
+  ignore_errors: true
+  changed_when: true
+
+- name: Allow K3s API port (6443) for cluster communication
+  command: ufw allow 6443/tcp
+  when: server_mode == 'cluster'
+  changed_when: true
+
+- name: Allow etcd ports for HA master nodes
+  command: ufw allow {{ item }}/tcp
+  loop:
+    - 2379
+    - 2380
+  when: 
+    - server_mode == 'cluster'
+    - node_function == 'master-node'
+  changed_when: true
+
+- name: Allow Kubelet port
+  command: ufw allow 10250/tcp
+  changed_when: true
+
+- name: Allow NodePort range (30000-32767)
+  command: ufw allow 30000:32767/tcp
+  changed_when: true
+
+- name: Allow HTTP from anywhere (master and single-node only)
+  command: ufw allow 80/tcp
+  when: node_function == 'master-node' or server_mode == 'single-node'
+  changed_when: true
+
+- name: Allow HTTPS from anywhere (master and single-node only)
+  command: ufw allow 443/tcp
+  when: node_function == 'master-node' or server_mode == 'single-node'
+  changed_when: true
+
+- name: Allow internal Kubernetes traffic (Pod CIDR)
+  command: ufw allow from {{ k3s_pod_cidr }}
+  changed_when: true
+
+- name: Allow internal Kubernetes traffic (Service CIDR)
+  command: ufw allow from {{ k3s_service_cidr }}
+  changed_when: true
+
+- name: Allow traffic on tailscale0 interface
+  command: ufw allow in on tailscale0
+  changed_when: true
+
+- name: Enable ufw
+  shell: echo "y" | ufw enable
+  changed_when: true
+
+- name: Get ufw status
+  command: ufw status numbered
+  register: ufw_status
+  changed_when: false
+  ignore_errors: true
+
+- name: Show ufw rules
+  debug:
+    msg: "{{ ufw_status.stdout_lines | default(['UFW status unknown']) }}"

@@ -1,0 +1,12 @@
+---
+- name: Detect firewall type based on username
+  debug:
+    msg: "Using {{ 'ufw' if ansible_user == 'ubuntu' else 'firewalld' }} for user {{ ansible_user }}"
+
+- name: Include firewalld tasks for root user
+  include_tasks: firewalld.yml
+  when: ansible_user == 'root'
+
+- name: Include ufw tasks for ubuntu user
+  include_tasks: ufw.yml
+  when: ansible_user == 'ubuntu'

@@ -1,0 +1,283 @@
+---
+- name: Check if K3s is already installed
+  command: systemctl status k3s
+  register: k3s_service_check
+  changed_when: false
+  failed_when: false
+  ignore_errors: true
+
+- name: Install dependencies
+  package:
+    name: [container-selinux, selinux-policy-base, curl]
+    state: present
+  when: ansible_os_family == "RedHat" and k3s_service_check.rc != 0
+
+- name: Set first master fact
+  set_fact:
+    first_master: "{{ (groups['role_master-node'] | intersect(groups[cluster_name]) | select('match', 'server_2') | list + groups['role_master-node'] | intersect(groups[cluster_name])) | first }}"
+  when: cluster_name is defined and cluster_name in groups
+
+# --- LOGIKA MASTER NODE ---
+- name: Master Node Logic
+  block:
+    - name: Initialize First Master Node
+      shell: curl -sfL https://get.k3s.io | INSTALL_K3S_SKIP_SELINUX_RPM=true sh -
+      environment:
+        INSTALL_K3S_EXEC: "server --cluster-init --write-kubeconfig-mode 644 --tls-san {{ ansible_host }} --node-ip {{ tailscale_ip }} --node-external-ip {{ ansible_host }} --advertise-address {{ tailscale_ip }} --flannel-iface=tailscale0 --etcd-arg=\"listen-peer-urls=https://0.0.0.0:2380\" --etcd-arg=\"listen-client-urls=https://0.0.0.0:2379,https://127.0.0.1:2379\""
+      when: 
+        - inventory_hostname == first_master
+        - k3s_service_check.rc != 0
+
+    - name: Wait for K3s API to be ready (First Master)
+      wait_for:
+        host: 127.0.0.1
+        port: 6443
+        timeout: 120
+        delay: 5
+      when: 
+        - inventory_hostname == first_master
+
+    - name: Wait for node-token to be created
+      wait_for:
+        path: /var/lib/rancher/k3s/server/node-token
+        timeout: 60
+        delay: 5
+      when: inventory_hostname == first_master
+
+    - name: Get K3s Token from First Master
+      shell: cat /var/lib/rancher/k3s/server/node-token
+      register: token_output
+      when: inventory_hostname == first_master
+      changed_when: false
+
+    - name: Set K3s Token as fact for the cluster
+      set_fact:
+        k3s_token: "{{ hostvars[first_master]['token_output']['stdout'] }}"
+      run_once: true
+
+    - name: Join Additional Master Nodes (HA)
+      shell: |
+        curl -sfL https://get.k3s.io | INSTALL_K3S_SKIP_SELINUX_RPM=true K3S_TOKEN={{ hostvars[first_master]['token_output']['stdout'] }} K3S_URL=https://{{ hostvars[first_master]['tailscale_ip'] }}:6443 sh -
+      environment:
+        INSTALL_K3S_EXEC: "server --write-kubeconfig-mode 644 --tls-san {{ ansible_host }} --node-ip {{ tailscale_ip }} --node-external-ip {{ ansible_host }} --advertise-address {{ tailscale_ip }} --flannel-iface=tailscale0 --etcd-arg=\"listen-peer-urls=https://0.0.0.0:2380\" --etcd-arg=\"listen-client-urls=https://0.0.0.0:2379,https://127.0.0.1:2379\""
+      when: 
+        - k3s_service_check.rc != 0
+        - inventory_hostname != first_master
+        - node_function == 'master-node'
+  when: node_function == 'master-node' or server_mode == 'single-node'
+
+# --- LOGIKA WORKER NODE ---
+- name: Join Worker Nodes
+  shell: |
+    curl -sfL https://get.k3s.io | INSTALL_K3S_SKIP_SELINUX_RPM=true K3S_TOKEN={{ hostvars[first_master]['token_output']['stdout'] }} K3S_URL=https://{{ hostvars[first_master]['tailscale_ip'] }}:6443 sh -
+  environment:
+    INSTALL_K3S_EXEC: "agent --node-ip {{ tailscale_ip }} --node-external-ip {{ ansible_host }} --flannel-iface=tailscale0"
+  when: 
+    - k3s_service_check.rc != 0
+    - node_function == 'worker-node'
+
+# --- VERIFIKASI & KUBECONFIG ---
+- name: Wait for K3s configuration
+  wait_for:
+    path: /etc/rancher/k3s/k3s.yaml
+    timeout: 60
+  when: node_function == 'master-node' or server_mode == 'single-node'
+
+- name: Wait for local API server health
+  command: kubectl get --raw /healthz
+  register: api_health
+  until: api_health.rc == 0
+  retries: 50
+  delay: 10
+  changed_when: false
+  when: node_function == 'master-node' or server_mode == 'single-node'
+
+- name: Wait for local API server ready
+  command: kubectl get --raw /readyz
+  register: api_ready
+  until: api_ready.rc == 0
+  retries: 50
+  delay: 10
+  changed_when: false
+  when: node_function == 'master-node' or server_mode == 'single-node'
+
+- name: Label node with cluster name
+  command: kubectl label node {{ custom_system_hostname | default(ansible_hostname) }} cluster-name={{ cluster_name }} --overwrite
+  register: label_result
+  until: label_result.rc == 0
+  retries: 10
+  delay: 5
+  changed_when: false
+  when: node_function == 'master-node' or server_mode == 'single-node'
+
+- name: Ingress & SSL Configuration (Master Only)
+  block:
+    - name: Install cert-manager
+      command: kubectl apply -f https://github.com/cert-manager/cert-manager/releases/download/v1.14.4/cert-manager.yaml
+      changed_when: false
+
+    - name: Wait for cert-manager to be ready
+      command: kubectl wait --for=condition=Available deployment --all -n cert-manager --timeout=120s
+      changed_when: false
+
+    - name: Deploy Let's Encrypt ClusterIssuers (Staging and Prod)
+      copy:
+        dest: /tmp/cluster-issuers.yaml
+        content: |
+          apiVersion: cert-manager.io/v1
+          kind: ClusterIssuer
+          metadata:
+            name: letsencrypt-staging
+          spec:
+            acme:
+              server: https://acme-staging-v02.api.letsencrypt.org/directory
+              email: admin@{{ cluster_domain }}
+              privateKeySecretRef:
+                name: letsencrypt-staging
+              solvers:
+              - http01:
+                  ingress:
+                    ingressClassName: traefik
+          ---
+          apiVersion: cert-manager.io/v1
+          kind: ClusterIssuer
+          metadata:
+            name: letsencrypt-prod
+          spec:
+            acme:
+              server: https://acme-v02.api.letsencrypt.org/directory
+              email: admin@{{ cluster_domain }}
+              privateKeySecretRef:
+                name: letsencrypt-prod
+              solvers:
+              - http01:
+                  ingress:
+                    ingressClassName: traefik
+      changed_when: false
+
+    - name: Apply ClusterIssuers
+      command: kubectl apply -f /tmp/cluster-issuers.yaml
+      changed_when: false
+
+    - name: Add local host entry for self-check (Fix cert-manager timeout)
+      lineinfile:
+        path: /etc/hosts
+        line: "127.0.0.1 {{ cluster_domain }}"
+        state: present
+      become: yes
+
+    - name: Deploy Sample Application with Ingress
+      copy:
+        dest: /tmp/sample-app.yaml
+        content: |
+          apiVersion: apps/v1
+          kind: Deployment
+          metadata:
+            name: hello-k8s
+          spec:
+            replicas: 2
+            selector:
+              matchLabels:
+                app: hello-k8s
+            template:
+              metadata:
+                labels:
+                  app: hello-k8s
+              spec:
+                containers:
+                - name: hello-k8s
+                  image: gcr.io/google-samples/hello-app:1.0
+                  ports:
+                  - containerPort: 8080
+          ---
+          apiVersion: v1
+          kind: Service
+          metadata:
+            name: hello-k8s
+          spec:
+            type: ClusterIP
+            selector:
+              app: hello-k8s
+            ports:
+            - port: 80
+              targetPort: 8080
+          ---
+          apiVersion: networking.k8s.io/v1
+          kind: Ingress
+          metadata:
+            name: hello-k8s-ingress
+            annotations:
+              cert-manager.io/cluster-issuer: letsencrypt-prod
+              kubernetes.io/ingress.class: traefik
+              traefik.ingress.kubernetes.io/router.entrypoints: web, websecure
+              traefik.ingress.kubernetes.io/router.middlewares: default-redirect-https@kubernetescrd
+          spec:
+            tls:
+            - hosts:
+              - "{{ cluster_domain }}"
+              secretName: hello-k8s-tls
+            rules:
+            - host: "{{ cluster_domain }}"
+              http:
+                paths:
+                - path: /
+                  pathType: Prefix
+                  backend:
+                    service:
+                      name: hello-k8s
+                      port:
+                        number: 80
+      changed_when: false
+
+    - name: Wait for Traefik CRDs to be registered
+      command: kubectl get crd middlewares.traefik.io
+      register: traefik_crd_check
+      until: traefik_crd_check.rc == 0
+      retries: 10
+      delay: 10
+      changed_when: false
+      ignore_errors: true
+
+    - name: Create HTTPS redirection middleware
+      shell: |
+        kubectl apply -f - <<EOF
+        apiVersion: traefik.io/v1alpha1
+        kind: Middleware
+        metadata:
+          name: redirect-https
+          namespace: default
+        spec:
+          redirectScheme:
+            scheme: https
+            permanent: true
+        EOF
+      args:
+        executable: /bin/bash
+      changed_when: false
+      when: traefik_crd_check is success
+
+    - name: Apply Sample Application
+      command: kubectl apply -f /tmp/sample-app.yaml
+      changed_when: false
+      when: traefik_crd_check is success
+  when: 
+    - inventory_hostname == first_master
+    - cluster_domain is defined
+
+- name: Fetch and Encrypt Kubeconfig (Master Only)
+  block:
+    - name: Fetch kubeconfig
+      slurp:
+        src: /etc/rancher/k3s/k3s.yaml
+      register: kubeconfig_raw
+
+    - name: Save and Encrypt locally
+      delegate_to: localhost
+      shell: |
+        echo "{{ kubeconfig_raw.content | b64decode | replace('127.0.0.1', cluster_domain | default(ansible_host)) }}" > "/tmp/{{ cluster_name }}.yaml"
+        export SOPS_AGE_KEY="{{ lookup('env', 'SOPS_AGE_KEY') }}"
+        sops --encrypt --age "{{ lookup('env', 'SOPS_AGE_PUBKEY') }}" "/tmp/{{ cluster_name }}.yaml" > "kubeconfigs/{{ cluster_name }}.enc.yaml"
+        rm "/tmp/{{ cluster_name }}.yaml"
+      args:
+        executable: /bin/bash
+  when: inventory_hostname == first_master

@@ -1,0 +1,81 @@
+---
+- name: Verify Server Configuration
+  hosts: cloud_servers
+  become: yes
+  gather_facts: yes
+
+  tasks:
+    # === Basic Connectivity ===
+    - name: Ping test
+      ping:
+
+    - name: Display server info
+      debug:
+        msg:
+          - "Hostname: {{ ansible_hostname }}"
+          - "OS: {{ ansible_distribution }} {{ ansible_distribution_version }}"
+          - "IP: {{ ansible_default_ipv4.address }}"
+
+    # === Firewall Verification ===
+    - name: Get firewall status
+      command: firewall-cmd --state
+      register: fw_state
+      changed_when: false
+
+    - name: Get firewall rules
+      command: firewall-cmd --list-all
+      register: fw_rules
+      changed_when: false
+
+    - name: Display firewall info
+      debug:
+        msg:
+          - "Firewall: {{ fw_state.stdout }}"
+          - "Configuration: {{ fw_rules.stdout }}"
+
+    # === Nginx Verification ===
+    - name: Check Nginx service
+      command: systemctl is-active nginx
+      register: nginx_status
+      changed_when: false
+
+    - name: Check Nginx version
+      command: nginx -v
+      register: nginx_ver
+      changed_when: false
+
+    - name: Test local HTTP
+      uri:
+        url: "http://localhost"
+        method: GET
+        status_code: 200
+        timeout: 10
+      register: http_test
+
+    - name: Display Nginx info
+      debug:
+        msg:
+          - "Nginx Status: {{ nginx_status.stdout }}"
+          - "Nginx Version: {{ nginx_ver.stderr }}"
+          - "HTTP Test: {{ 'PASSED' if http_test.status == 200 else 'FAILED' }}"
+
+    # === Summary ===
+    - name: Verification Summary
+      debug:
+        msg:
+          - "========================================"
+          - "SERVER VERIFICATION SUMMARY"
+          - "========================================"
+          - "Server: {{ ansible_hostname }}"
+          - "OS: {{ ansible_distribution }} {{ ansible_distribution_version }}"
+          - ""
+          - "Firewall: {{ fw_state.stdout }}"
+          - "Web Server: {{ nginx_status.stdout }} ({{ nginx_ver.stderr }})"
+          - ""
+          - "Access:"
+          - "  - SSH: Port 22 (restricted)"
+          - "  - HTTP: Port 80 (public)"
+          - "  - HTTPS: Port 443 (public)"
+          - ""
+          - "URL: http://{{ ansible_host }}"
+          - "========================================"

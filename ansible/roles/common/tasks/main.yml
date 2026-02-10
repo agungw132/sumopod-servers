@@ -1,0 +1,15 @@
+---
+- name: Ping test
+  ping:
+
+- name: Set system hostname
+  hostname:
+    name: "{{ custom_system_hostname }}"
+  when: custom_system_hostname is defined and custom_system_hostname != ""
+
+- name: Show server info
+  debug:
+    msg:
+      - "Hostname: {{ ansible_hostname }}"
+      - "OS: {{ ansible_distribution }} {{ ansible_distribution_version }}"
+      - "IP: {{ ansible_default_ipv4.address }}"

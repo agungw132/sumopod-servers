@@ -41,6 +41,12 @@
         - tailscale
         - tailscaled
 
+- name: Install systemd service
+  copy:
+    src: "/tmp/tailscale_{{ tailscale_version }}_{{ tailscale_arch }}/systemd/tailscaled.service"
+    dest: "/etc/systemd/system/tailscaled.service"
+    remote_src: yes
+  when: ansible_distribution == "OpenCloudOS"
 
 - name: Update systemd service binary path
   replace:

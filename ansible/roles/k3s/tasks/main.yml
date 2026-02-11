@@ -23,7 +23,7 @@
     - name: Initialize First Master Node
       shell: curl -sfL https://get.k3s.io | INSTALL_K3S_SKIP_SELINUX_RPM=true sh -
       environment:
-        INSTALL_K3S_EXEC: "server --cluster-init --write-kubeconfig-mode 644 --tls-san {{ ansible_host }} --node-ip {{ tailscale_ip }} --node-external-ip {{ ansible_host }} --advertise-address {{ tailscale_ip }} --flannel-iface=tailscale0 --etcd-arg=\"listen-peer-urls=https://0.0.0.0:2380\" --etcd-arg=\"listen-client-urls=https://0.0.0.0:2379,https://127.0.0.1:2379\""
+        INSTALL_K3S_EXEC: "server --cluster-init --write-kubeconfig-mode 644 --tls-san {{ ansible_host }} --tls-san {{ cluster_domain }} --node-ip {{ tailscale_ip }} --node-external-ip {{ ansible_host }} --advertise-address {{ tailscale_ip }} --flannel-iface=tailscale0 --etcd-arg=\"listen-peer-urls=https://0.0.0.0:2380\" --etcd-arg=\"listen-client-urls=https://0.0.0.0:2379,https://127.0.0.1:2379\""
       when: 
         - inventory_hostname == first_master
         - k3s_service_check.rc != 0
@@ -59,7 +59,7 @@
       shell: |
         curl -sfL https://get.k3s.io | INSTALL_K3S_SKIP_SELINUX_RPM=true K3S_TOKEN={{ hostvars[first_master]['token_output']['stdout'] }} K3S_URL=https://{{ hostvars[first_master]['tailscale_ip'] }}:6443 sh -
       environment:
-        INSTALL_K3S_EXEC: "server --write-kubeconfig-mode 644 --tls-san {{ ansible_host }} --node-ip {{ tailscale_ip }} --node-external-ip {{ ansible_host }} --advertise-address {{ tailscale_ip }} --flannel-iface=tailscale0 --etcd-arg=\"listen-peer-urls=https://0.0.0.0:2380\" --etcd-arg=\"listen-client-urls=https://0.0.0.0:2379,https://127.0.0.1:2379\""
+        INSTALL_K3S_EXEC: "server --write-kubeconfig-mode 644 --tls-san {{ ansible_host }} --tls-san {{ cluster_domain }} --node-ip {{ tailscale_ip }} --node-external-ip {{ ansible_host }} --advertise-address {{ tailscale_ip }} --flannel-iface=tailscale0 --etcd-arg=\"listen-peer-urls=https://0.0.0.0:2380\" --etcd-arg=\"listen-client-urls=https://0.0.0.0:2379,https://127.0.0.1:2379\""
       when: 
         - k3s_service_check.rc != 0
         - inventory_hostname != first_master

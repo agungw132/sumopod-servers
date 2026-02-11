@@ -13,6 +13,7 @@ Automated deployment and management of a **Multi-Master High-Availability (HA) K
 ## ✨ Key Features
 
 *   **🏆 Multi-Master HA**: Redundant Control Plane with clustered `etcd` for zero-downtime management.
+*   **🔄 Fresh Image Ready**: Fully automated setup proven to work from scratch on empty server images.
 *   **🛡️ Tailscale Mesh**: Secure, encrypted inter-node communication over a private WireGuard overlay.
 *   **🔒 Security Hardened**: Automated `firewalld`/`ufw` configuration applied post-deployment.
 *   **📜 Automated SSL**: Integrated `cert-manager` with Let's Encrypt for automatic HTTPS.

@@ -41,3 +41,17 @@ The `site.yml` follows a specific sequence for HA and Security:
 - **tailscale_version**: Managed version of Tailscale.
 - **k3s_pod_cidr**: Managed Pod IP range.
 - **k3s_service_cidr**: Managed Service IP range.
+
+## Troubleshooting
+
+### .env Line Endings (CRLF vs LF)
+If you encounter errors like `\r: command not found` when loading `.env` in WSL, convert the file to LF format using PowerShell:
+```powershell
+(Get-Content .env) -join "`n" + "`n" | Set-Content -NoNewline .env
+```
+
+### SSH Connection Issues (Fresh Images)
+If you hard-reset your servers, old host keys will cause "REMOTE HOST IDENTIFICATION HAS CHANGED" errors. Clear them in WSL:
+```bash
+ssh-keygen -f '/root/.ssh/known_hosts' -R '<SERVER_IP>'
+```

@@ -6,6 +6,7 @@ This directory contains the automated configuration for the SumoPod server fleet
 
 Instead of a static file, we use a **Dynamic Inventory** script:
 - `inventory/dynamic_env.py`: Parses environment variables with the prefix `SERVER_` and maps them to Ansible hosts.
+- It also reads `INSTALL_ALSO_ON_K8S_MASTER` (default: `true`) to determine if master nodes should be tainted.
 
 ## Global Variables (`group_vars/all.yml`)
 

@@ -10,7 +10,8 @@ def get_inventory():
             'vars': {
                 'ansible_python_interpreter': '/usr/bin/python3',
                 'k8s_domain': os.environ.get('K8S_DOMAIN', 'localhost'),
-                'firewall_trusted_ip': os.environ.get('FIREWALL_TRUSTED_IP', '127.0.0.1')
+                'firewall_trusted_ip': os.environ.get('FIREWALL_TRUSTED_IP', '127.0.0.1'),
+                'install_also_on_k8s_master': os.environ.get('INSTALL_ALSO_ON_K8S_MASTER', 'true').lower() == 'true'
             }
         },
         '_meta': {

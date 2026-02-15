@@ -33,6 +33,12 @@ This document tracks the automated configurations for the Kubernetes fleet.
 - **Tailscale Trust**: The `tailscale0` interface and its overlay IPs are explicitly trusted.
 - **Public Services**: HTTP (80) and HTTPS (443) open on Master nodes for Ingress traffic.
 
+#### 4. Master Node Isolation
+- **Configurable Workloads**: Master nodes can be configured to run or reject application workloads using `INSTALL_ALSO_ON_K8S_MASTER` in `.env`.
+- **Default Behavior**: By default (`true`), master nodes act as both control plane and worker nodes.
+- **Isolation Mode**: If set to `false`, master nodes are tainted (`CriticalAddonsOnly=true:NoSchedule`), ensuring they only run system components.
+- **Revertable**: This setting can be toggled at any time by updating `.env` and re-running the Ansible playbook.
+
 ---
 
 ## Ansible Infrastructure
